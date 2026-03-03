@@ -72,6 +72,7 @@ class MouseMonitor:
             self._has_expected = True
 
     def _run(self):
+        _debug_count = 0
         while not self._stop_event.is_set():
             time.sleep(_POLL_INTERVAL)
 
@@ -89,6 +90,11 @@ class MouseMonitor:
             dx = abs(ax - ex)
             dy = abs(ay - ey)
 
+            _debug_count += 1
+            if _debug_count <= 10 or _debug_count % 100 == 0:
+                print(f"[mouse-monitor] poll #{_debug_count}: expected=({ex:.0f},{ey:.0f}) actual=({ax:.0f},{ay:.0f}) delta=({dx:.0f},{dy:.0f})")
+
             if dx > _DEVIATION_THRESHOLD or dy > _DEVIATION_THRESHOLD:
+                print(f"[mouse-monitor] EXTERNAL MOUSE DETECTED! delta=({dx:.0f},{dy:.0f})")
                 self._enabled = False
                 self._callback()

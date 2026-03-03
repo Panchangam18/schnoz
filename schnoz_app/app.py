@@ -30,13 +30,35 @@ REGULAR = "regular"
 ULTRA = "ultra"
 
 
+class _MainThreadDispatcher:
+    """Dispatch callables to the main (AppKit) thread via performSelector."""
+
+    def __init__(self):
+        from Foundation import NSObject
+
+        class _Trampoline(NSObject):
+            _callables = []
+
+            def fire_(self, _sender):
+                while self._callables:
+                    fn = self._callables.pop(0)
+                    fn()
+
+        self._trampoline = _Trampoline.alloc().init()
+
+    def dispatch(self, fn):
+        self._trampoline._callables.append(fn)
+        self._trampoline.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "fire:", None, False,
+        )
+
+
+_dispatcher = _MainThreadDispatcher()
+
+
 def _dispatch_to_main(fn):
-    """Schedule a no-arg function to run on the main (rumps) thread."""
-    def _fire(timer):
-        timer.stop()
-        fn()
-    t = rumps.Timer(_fire, 0.01)
-    t.start()
+    """Schedule a no-arg function to run on the main (AppKit) thread."""
+    _dispatcher.dispatch(fn)
 
 
 class SchnozApp(rumps.App):
