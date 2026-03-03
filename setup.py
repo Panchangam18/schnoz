@@ -3,9 +3,15 @@
 from setuptools import setup
 
 APP = ["schnoz_app/app.py"]
-DATA_FILES = [("assets", ["assets/schnoz_icon.png", "assets/schnoz_icon_active.png"])]
+DATA_FILES = [
+    ("assets", [
+        "assets/schnoz_iconTemplate.png",
+        "assets/Copy of schnoz-logo-2.png",
+    ]),
+]
 OPTIONS = {
     "argv_emulation": False,
+    "iconfile": "assets/Schnoz.icns",
     "plist": {
         "LSUIElement": True,  # No dock icon
         "CFBundleName": "Schnoz",

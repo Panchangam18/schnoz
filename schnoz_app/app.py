@@ -52,8 +52,8 @@ class SchnozApp(rumps.App):
         self._wispr_client = None
 
         # Menu items
-        self._regular_item = rumps.MenuItem("Regular Mode  ⌘↩", callback=self._menu_regular)
-        self._ultra_item = rumps.MenuItem("Ultra Schnoz  ⌘⇧↩", callback=self._menu_ultra)
+        self._regular_item = rumps.MenuItem("Regular  ⌘↩", callback=self._menu_regular)
+        self._ultra_item = rumps.MenuItem("Ultraschnoz  ⌘⇧↩", callback=self._menu_ultra)
         self._quit_item = rumps.MenuItem("Quit Schnoz", callback=self._quit)
 
         self.menu = [
