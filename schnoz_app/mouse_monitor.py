@@ -23,7 +23,7 @@ def _get_cursor_pos() -> tuple[float, float]:
 
 
 # How far the cursor must deviate from expected position to count as "external"
-_DEVIATION_THRESHOLD = 15.0
+_DEVIATION_THRESHOLD = 30.0
 
 # How often to check (seconds)
 _POLL_INTERVAL = 0.05
@@ -73,14 +73,17 @@ class MouseMonitor:
 
     def _run(self):
         _debug_count = 0
+        _consecutive_deviations = 0
         while not self._stop_event.is_set():
             time.sleep(_POLL_INTERVAL)
 
             if not self._enabled:
+                _consecutive_deviations = 0
                 continue
 
             with self._lock:
                 if not self._has_expected:
+                    _consecutive_deviations = 0
                     continue
                 ex, ey = self._expected_x, self._expected_y
 
@@ -95,6 +98,11 @@ class MouseMonitor:
                 print(f"[mouse-monitor] poll #{_debug_count}: expected=({ex:.0f},{ey:.0f}) actual=({ax:.0f},{ay:.0f}) delta=({dx:.0f},{dy:.0f})")
 
             if dx > _DEVIATION_THRESHOLD or dy > _DEVIATION_THRESHOLD:
-                print(f"[mouse-monitor] EXTERNAL MOUSE DETECTED! delta=({dx:.0f},{dy:.0f})")
-                self._enabled = False
-                self._callback()
+                _consecutive_deviations += 1
+                # Require 2 consecutive deviations to filter out race conditions
+                if _consecutive_deviations >= 2:
+                    print(f"[mouse-monitor] EXTERNAL MOUSE DETECTED! delta=({dx:.0f},{dy:.0f})")
+                    self._enabled = False
+                    self._callback()
+            else:
+                _consecutive_deviations = 0
