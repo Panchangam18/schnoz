@@ -5,8 +5,7 @@ from pathlib import Path
 APP_NAME = "Schnoz"
 BUNDLE_DIR = Path(__file__).parent.parent
 ASSETS_DIR = BUNDLE_DIR / "assets"
-ICON_PATH = str(ASSETS_DIR / "schnoz_icon.png")
-ICON_ACTIVE_PATH = str(ASSETS_DIR / "schnoz_icon_active.png")
+ICON_PATH = str(ASSETS_DIR / "schnoz_iconTemplate.png")
 
 # Tracking defaults
 DEFAULT_SENSITIVITY = 1.5

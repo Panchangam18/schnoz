@@ -16,7 +16,7 @@ import threading
 
 import rumps
 
-from schnoz_app.config import APP_NAME, WISPRFLOW_API_KEY
+from schnoz_app.config import APP_NAME, ICON_PATH, WISPRFLOW_API_KEY
 from schnoz_app.hotkey_listener import HotkeyListener
 from schnoz_app.mouse_monitor import MouseMonitor
 from schnoz_app.tracking_engine import TrackingEngine
@@ -42,7 +42,7 @@ def _dispatch_to_main(fn):
 class SchnozApp(rumps.App):
 
     def __init__(self):
-        super().__init__(APP_NAME, title="S", quit_button=None)
+        super().__init__(APP_NAME, icon=ICON_PATH, title=None, quit_button=None)
 
         self._state = IDLE
         self._tracker: TrackingEngine | None = None
@@ -194,12 +194,13 @@ class SchnozApp(rumps.App):
         self._regular_item.state = self._state in (REGULAR, ULTRA)
         self._ultra_item.state = self._state == ULTRA
 
+        # Small text next to icon to indicate active mode
         if self._state == IDLE:
-            self.title = "S"
+            self.title = None
         elif self._state == REGULAR:
-            self.title = "S*"
+            self.title = "ON"
         elif self._state == ULTRA:
-            self.title = "S**"
+            self.title = "ULTRA"
 
 
 def main():
