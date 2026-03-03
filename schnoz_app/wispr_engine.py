@@ -123,6 +123,8 @@ class AlwaysDictatingWisprClient:
                 break
             self._chunk_number += 1
             self._total_packets += 1
+            if self._total_packets <= 3:
+                print(f"[wispr] Sent audio chunk #{self._total_packets} (vol={volume:.0f})")
 
     async def _commit(self):
         """Send commit to finalize the current transcription session."""
@@ -144,8 +146,15 @@ class AlwaysDictatingWisprClient:
                 status = data.get("status") or data.get("type", "")
 
                 if status == "text":
-                    text = data.get("text", "").strip()
+                    # Text can be at data["text"] or data["body"]["text"]
+                    body = data.get("body", {})
+                    text = body.get("text") or data.get("text") or ""
+                    if isinstance(text, str):
+                        text = text.strip()
+                    else:
+                        text = ""
                     if text:
+                        print(f"[wispr] Transcribed: {text!r}")
                         self._text_queue.put(text)
                 elif status == "error":
                     print(f"[wispr] Error: {data}")
@@ -156,8 +165,9 @@ class AlwaysDictatingWisprClient:
     async def _periodic_commit(self):
         """Periodically commit audio to get transcription results."""
         while self._running:
-            await asyncio.sleep(3.0)
+            await asyncio.sleep(8.0)
             if self._total_packets > 0:
+                print(f"[wispr] Committing {self._total_packets} packets")
                 await self._commit()
                 return
 
