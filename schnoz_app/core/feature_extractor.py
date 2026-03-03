@@ -15,7 +15,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-NosePose = namedtuple("NosePose", ["raw_nose_x", "raw_nose_y", "yaw", "pitch", "double_blink"])
+from schnoz_app.config import DEFAULT_SQUINT_THRESHOLD_RATIO
+
+NosePose = namedtuple("NosePose", ["raw_nose_x", "raw_nose_y", "yaw", "pitch", "squinting", "double_blink"])
 
 # --- Nose landmarks ---
 NOSE_TIP = 1
@@ -158,9 +160,10 @@ class NoseFeatureExtractor:
     def __init__(
         self,
         face_landmarker_model: str | os.PathLike[str] | None = None,
-        ear_history_len: int = 50,
+        ear_history_len: int = 90,
         blink_threshold_ratio: float = 0.75,
-        min_history: int = 15,
+        squint_threshold_ratio: float = DEFAULT_SQUINT_THRESHOLD_RATIO,
+        min_history: int = 30,
     ):
         self._mp, self._face_landmarker = _create_face_landmarker(
             model_path=face_landmarker_model,
@@ -170,7 +173,12 @@ class NoseFeatureExtractor:
         # Blink detection state
         self._ear_history: deque[float] = deque(maxlen=ear_history_len)
         self._blink_ratio = blink_threshold_ratio
+        self._squint_ratio = squint_threshold_ratio
         self._min_history = min_history
+        self._last_ear = 0.0
+        self._open_baseline = 0.0  # stable "eyes open" EAR baseline
+        self._frame_count = 0
+        self._history_frozen = False  # pause history updates during drag
 
         # Double-blink detection
         self._was_blinking = False
@@ -199,17 +207,44 @@ class NoseFeatureExtractor:
 
         return (left_ear + right_ear) / 2.0
 
+    def freeze_baseline(self):
+        """Freeze EAR history so squinting/dragging can't corrupt the baseline."""
+        self._history_frozen = True
+
+    def unfreeze_baseline(self):
+        """Resume updating EAR history after drag ends."""
+        self._history_frozen = False
+
     def _detect_blink(self, all_points: np.ndarray) -> bool:
         """Detect blinks using Eye Aspect Ratio (EAR)."""
         ear = self._compute_ear(all_points)
-        self._ear_history.append(ear)
+        self._last_ear = ear
+        self._frame_count += 1
 
-        if len(self._ear_history) >= self._min_history:
-            threshold = float(np.mean(self._ear_history)) * self._blink_ratio
+        # Only record into history when not frozen (during drag, squint
+        # values would corrupt the baseline)
+        if not self._history_frozen:
+            self._ear_history.append(ear)
+            # Only recompute baseline when we actually added new data
+            if len(self._ear_history) >= self._min_history:
+                sorted_hist = sorted(self._ear_history)
+                idx = int(len(sorted_hist) * 0.75)
+                self._open_baseline = float(sorted_hist[min(idx, len(sorted_hist) - 1)])
+
+        if self._open_baseline > 0:
+            threshold = self._open_baseline * self._blink_ratio
         else:
             threshold = 0.2
 
         return ear < threshold
+
+    def _detect_squint(self) -> bool:
+        """Detect squinting: EAR below squint threshold but above blink threshold."""
+        if self._open_baseline <= 0:
+            return False
+        blink_thresh = self._open_baseline * self._blink_ratio
+        squint_thresh = self._open_baseline * self._squint_ratio
+        return blink_thresh <= self._last_ear < squint_thresh
 
     def _detect_double_blink(self, is_blinking: bool) -> bool:
         """Detect double-blink pattern from blink timing."""
@@ -355,6 +390,7 @@ class NoseFeatureExtractor:
             double_blink = self._detect_double_blink(is_blinking)
             return None, is_blinking
 
+        squinting = self._detect_squint()
         double_blink = self._detect_double_blink(is_blinking)
 
         # Indices in the 30D feature vector:
@@ -364,6 +400,7 @@ class NoseFeatureExtractor:
             raw_nose_y=features[16],
             yaw=features[12],
             pitch=features[13],
+            squinting=squinting,
             double_blink=double_blink,
         ), is_blinking
 

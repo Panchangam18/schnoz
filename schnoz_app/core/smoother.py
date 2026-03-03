@@ -38,6 +38,16 @@ class KalmanEMASmoother:
         self.ema_x: float | None = None
         self.ema_y: float | None = None
 
+    def snap_to(self, x: int, y: int) -> None:
+        """Reset smoother state so the next step starts from (x, y) with no lag."""
+        meas = np.array([[float(x)], [float(y)]], dtype=np.float32)
+        self.kf.statePre[:2] = meas
+        self.kf.statePre[2:] = 0  # zero velocity
+        self.kf.statePost[:2] = meas
+        self.kf.statePost[2:] = 0
+        self.ema_x = float(x)
+        self.ema_y = float(y)
+
     def step(self, x: int, y: int) -> tuple[int, int]:
         meas = np.array([[float(x)], [float(y)]], dtype=np.float32)
 

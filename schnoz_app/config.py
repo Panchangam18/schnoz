@@ -21,5 +21,16 @@ DEFAULT_EMA_ALPHA = 0.4
 DEFAULT_PROCESS_VAR = 15.0
 DEFAULT_CAMERA_INDEX = 0
 
+# Squint detection (drag and drop)
+DEFAULT_SQUINT_THRESHOLD_RATIO = 0.90
+SQUINT_SUSTAIN_TIME = 0.40          # hold squint 400ms before drag activates (filters blinks)
+SQUINT_RELEASE_DEBOUNCE = 0.25      # eyes open 250ms to end drag
+
+# Double-take detection (space switching)
+DOUBLE_TAKE_TURN_THRESHOLD = 0.06
+DOUBLE_TAKE_RETURN_THRESHOLD = 0.03
+DOUBLE_TAKE_TIME_WINDOW = 1.2
+DOUBLE_TAKE_COOLDOWN = 1.5
+
 # Wispr Flow
 WISPRFLOW_API_KEY = "fl-48c6565f94a869138d5d81b9d672d834"

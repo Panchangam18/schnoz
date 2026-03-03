@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 
 import cv2
 
@@ -17,11 +18,19 @@ from schnoz_app.config import (
     DEFAULT_POSITION_SCALE,
     DEFAULT_PROCESS_VAR,
     DEFAULT_SENSITIVITY,
+    SQUINT_RELEASE_DEBOUNCE,
+    SQUINT_SUSTAIN_TIME,
 )
+from schnoz_app.core.double_take_detector import DoubleTakeDetector
 from schnoz_app.core.feature_extractor import NoseFeatureExtractor
 from schnoz_app.core.projection import NoseProjector
 from schnoz_app.core.smoother import KalmanEMASmoother, make_kalman
 from schnoz_app.platform import CursorController, KeyboardController, get_screen_size
+
+# Drag state constants
+_DRAG_IDLE = "idle"
+_DRAG_PENDING = "pending"
+_DRAG_ACTIVE = "active"
 
 
 class TrackingEngine:
@@ -81,6 +90,15 @@ class TrackingEngine:
         )
         kalman = make_kalman(process_var=DEFAULT_PROCESS_VAR)
         smoother = KalmanEMASmoother(kalman, ema_alpha=DEFAULT_EMA_ALPHA)
+        double_take = DoubleTakeDetector()
+
+        # Drag state
+        drag_state = _DRAG_IDLE
+        squint_start_time = 0.0
+        squint_release_time: float | None = None
+        drag_start_time = 0.0  # when drag activated (for grace period)
+        drag_ema_x = 0.0  # lightweight EMA for responsive drag movement
+        drag_ema_y = 0.0
 
         frame_count = 0
         try:
@@ -97,25 +115,88 @@ class TrackingEngine:
                     if pose is not None:
                         print(f"  nose=({pose.raw_nose_x:.0f},{pose.raw_nose_y:.0f}) yaw={pose.yaw:.3f} pitch={pose.pitch:.3f}")
 
-                # Double-blink → click
                 did_click = False
-                if pose is not None and pose.double_blink:
-                    cursor_ctl.click()
-                    did_click = True
 
-                # Head tracking → cursor movement
-                if pose is not None and not is_blinking and not did_click:
+                if pose is not None:
+                    # --- Double-blink click (works in any drag state) ---
+                    if pose.double_blink:
+                        if drag_state == _DRAG_ACTIVE:
+                            cursor_ctl.mouse_up()
+                        if drag_state != _DRAG_IDLE:
+                            extractor.unfreeze_baseline()
+                        drag_state = _DRAG_IDLE
+                        squint_release_time = None
+                        cursor_ctl.click()
+                        did_click = True
+
+                    # --- Drag state machine ---
+                    elif drag_state == _DRAG_IDLE:
+                        if pose.squinting:
+                            drag_state = _DRAG_PENDING
+                            squint_start_time = time.time()
+                            extractor.freeze_baseline()
+
+                    elif drag_state == _DRAG_PENDING:
+                        if not pose.squinting:
+                            drag_state = _DRAG_IDLE
+                            extractor.unfreeze_baseline()
+                        elif time.time() - squint_start_time >= SQUINT_SUSTAIN_TIME:
+                            cx, cy = projector.project(
+                                pose.raw_nose_x, pose.raw_nose_y,
+                                pose.yaw, pose.pitch,
+                            )
+                            drag_ema_x = cx
+                            drag_ema_y = cy
+                            cursor_ctl.mouse_down()
+                            drag_state = _DRAG_ACTIVE
+                            drag_start_time = time.time()
+                            squint_release_time = None
+                            print("[schnoz] DRAG START")
+
+                    elif drag_state == _DRAG_ACTIVE:
+                        eyes_relaxed = not pose.squinting and not is_blinking
+                        if eyes_relaxed:
+                            if squint_release_time is None:
+                                squint_release_time = time.time()
+                            elif time.time() - squint_release_time >= SQUINT_RELEASE_DEBOUNCE:
+                                smoother.snap_to(int(drag_ema_x), int(drag_ema_y))
+                                cursor_ctl.mouse_up()
+                                drag_state = _DRAG_IDLE
+                                extractor.unfreeze_baseline()
+                                squint_release_time = None
+                                print("[schnoz] DRAG END")
+                        else:
+                            squint_release_time = None
+
+                    # --- Double-take detection (only when not dragging) ---
+                    if drag_state == _DRAG_IDLE:
+                        swipe_dir = double_take.update(pose.yaw)
+                        if swipe_dir is not None:
+                            keyboard_ctl.switch_space(swipe_dir)
+                            print(f"[schnoz] SWIPE {swipe_dir.upper()} (double-take)")
+
+                # --- Cursor movement ---
+                # Freeze cursor during pending squint and double-take gesture
+                if pose is not None and not is_blinking and not did_click and not double_take.mid_gesture and drag_state != _DRAG_PENDING:
                     cx, cy = projector.project(
                         pose.raw_nose_x, pose.raw_nose_y,
                         pose.yaw, pose.pitch,
                     )
-                    sx, sy = smoother.step(int(cx), int(cy))
+                    if drag_state == _DRAG_ACTIVE:
+                        # During drag, bypass smoother for responsive movement.
+                        # Use light EMA only (no Kalman) to reduce jitter.
+                        drag_alpha = 0.3  # lower = more responsive
+                        drag_ema_x = drag_alpha * drag_ema_x + (1.0 - drag_alpha) * cx
+                        drag_ema_y = drag_alpha * drag_ema_y + (1.0 - drag_alpha) * cy
+                        sx, sy = int(drag_ema_x), int(drag_ema_y)
+                    else:
+                        sx, sy = smoother.step(int(cx), int(cy))
                     if frame_count <= 5:
                         print(f"  projected=({cx:.0f},{cy:.0f}) smoothed=({sx},{sy})")
-                    cursor_ctl.move(sx, sy)
-                    # Report to mouse monitor so it doesn't treat our move as external
+                    # Report BEFORE moving so the monitor never sees a stale expected pos
                     if self._mouse_monitor is not None:
                         self._mouse_monitor.report_programmatic_move(float(sx), float(sy))
+                    cursor_ctl.move(sx, sy)
 
                 # Poll for transcribed text from Wispr (Ultra mode)
                 text_q = self._text_queue
@@ -127,5 +208,8 @@ class TrackingEngine:
                         except queue.Empty:
                             break
         finally:
+            if drag_state == _DRAG_ACTIVE:
+                cursor_ctl.mouse_up()
+                print("[schnoz] DRAG cleanup (engine stopping)")
             cap.release()
             extractor.close()
