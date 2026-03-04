@@ -288,10 +288,16 @@ class TrackingEngine:
                         pose.yaw, pose.pitch,
                     )
                     if drag_active:
-                        # During drag, use same smoother as normal movement
-                        sx, sy = smoother.step(int(cx), int(cy))
-                        if frame_count % 10 == 0:
-                            print(f"[schnoz-debug] frame {frame_count}: DRAG proj=({cx:.0f},{cy:.0f}) smooth=({sx},{sy})")
+                        # During drag, use lightweight EMA for responsiveness
+                        # (Kalman+EMA smoother lags too much during fast drags)
+                        drag_alpha = 0.3  # lower = more responsive
+                        drag_ema_x = drag_alpha * drag_ema_x + (1.0 - drag_alpha) * cx
+                        drag_ema_y = drag_alpha * drag_ema_y + (1.0 - drag_alpha) * cy
+                        sx, sy = int(drag_ema_x), int(drag_ema_y)
+                        # Keep the main smoother in sync so transition back is smooth
+                        smoother.snap_to(sx, sy)
+                        prev_cx, prev_cy = cursor_ctl.last_x, cursor_ctl.last_y
+                        print(f"[schnoz-drag] f{frame_count}: nose=({pose.raw_nose_x:.0f},{pose.raw_nose_y:.0f}) yaw={pose.yaw:.4f} pitch={pose.pitch:.4f} proj=({cx:.0f},{cy:.0f}) smooth=({sx},{sy}) cursor=({prev_cx:.0f},{prev_cy:.0f}) delta=({sx-prev_cx:.0f},{sy-prev_cy:.0f})")
                     elif drag_pending:
                         # Weighted pending: slow cursor proportionally to squint depth.
                         # EAR at squint threshold → speed_factor=0 (frozen)
