@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
+from AppKit import NSCursor
 from Quartz import (
     CGDisplayBounds,
     CGEventCreateMouseEvent,
@@ -63,6 +64,7 @@ class CursorController:
         )
         CGEventPost(kCGHIDEventTap, down)
         self._dragging = True
+        NSCursor.closedHandCursor().set()
 
     def mouse_up(self):
         pos = (self.last_x, self.last_y)
@@ -71,6 +73,7 @@ class CursorController:
         )
         CGEventPost(kCGHIDEventTap, up)
         self._dragging = False
+        NSCursor.arrowCursor().set()
 
     def drag_move(self, x, y):
         x = float(np.clip(x, 0, self.screen_w))
