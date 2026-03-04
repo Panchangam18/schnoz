@@ -18,7 +18,7 @@ import numpy as np
 
 from schnoz_app.config import DEFAULT_SQUINT_THRESHOLD_RATIO
 
-NosePose = namedtuple("NosePose", ["raw_nose_x", "raw_nose_y", "yaw", "pitch", "squinting", "double_blink"])
+NosePose = namedtuple("NosePose", ["raw_nose_x", "raw_nose_y", "yaw", "pitch", "squinting", "double_blink", "triple_blink"])
 
 # --- Nose landmarks ---
 NOSE_TIP = 1
@@ -185,10 +185,11 @@ class NoseFeatureExtractor:
         self._frame_count = 0
         self._history_frozen = False  # pause history updates during drag
 
-        # Double-blink detection
+        # Double-blink / triple-blink detection
         self._was_blinking = False
         self._blink_end_times: list[float] = []
         self._last_double_blink_time = 0.0
+        self._double_blink_pending_time = 0.0
 
     @staticmethod
     def _compute_ear_fast(landmarks) -> float:
@@ -278,8 +279,14 @@ class NoseFeatureExtractor:
         squint_thresh = self._open_baseline * self._squint_ratio
         return blink_thresh <= self._last_ear < squint_thresh
 
-    def _detect_double_blink(self, is_blinking: bool) -> bool:
-        """Detect double-blink pattern from blink timing."""
+    def _detect_blinks(self, is_blinking: bool) -> tuple[bool, bool]:
+        """Detect double-blink and triple-blink patterns from blink timing.
+
+        Returns (double_blink, triple_blink).
+        After 2 rapid blink-ends, waits up to 250ms for a possible 3rd blink
+        before committing to a double-blink. This prevents double-blink from
+        consuming the first two blinks of a triple-blink sequence.
+        """
         now = time.time()
 
         # Detect blink-end (was blinking, now not)
@@ -288,16 +295,38 @@ class NoseFeatureExtractor:
         self._was_blinking = is_blinking
 
         # Prune old timestamps
-        self._blink_end_times = [t for t in self._blink_end_times if now - t < 0.8]
+        self._blink_end_times = [t for t in self._blink_end_times if now - t < 1.0]
 
-        # Two blink-ends within 600ms = double blink (with 1s cooldown)
-        if len(self._blink_end_times) >= 2 and now - self._last_double_blink_time > 1.0:
-            gap = self._blink_end_times[-1] - self._blink_end_times[-2]
-            if gap < 0.6:
+        if now - self._last_double_blink_time <= 1.0:
+            return False, False
+
+        # Triple-blink: 3 blink-ends within 800ms
+        if len(self._blink_end_times) >= 3:
+            span = self._blink_end_times[-1] - self._blink_end_times[-3]
+            if span < 0.8:
                 self._last_double_blink_time = now
                 self._blink_end_times.clear()
-                return True
-        return False
+                self._double_blink_pending_time = 0.0
+                return False, True
+
+        # Double-blink candidate: 2 blink-ends within 600ms
+        if len(self._blink_end_times) >= 2:
+            gap = self._blink_end_times[-1] - self._blink_end_times[-2]
+            if gap < 0.6:
+                # First time we see the candidate — record it and wait
+                if self._double_blink_pending_time == 0.0:
+                    self._double_blink_pending_time = self._blink_end_times[-1]
+                # Wait 250ms for a possible 3rd blink before committing
+                if now - self._double_blink_pending_time >= 0.25:
+                    self._last_double_blink_time = now
+                    self._blink_end_times.clear()
+                    self._double_blink_pending_time = 0.0
+                    return True, False
+                return False, False
+
+        # No pattern — reset pending state
+        self._double_blink_pending_time = 0.0
+        return False, False
 
     def extract_features(self, image: np.ndarray) -> tuple[np.ndarray | None, bool]:
         """
@@ -439,7 +468,7 @@ class NoseFeatureExtractor:
 
         if not result.face_landmarks:
             is_blinking = False
-            double_blink = self._detect_double_blink(is_blinking)
+            self._detect_blinks(is_blinking)
             if self._frame_count % 30 == 0:
                 print(f"[schnoz-debug] extract_pose: NO FACE (cvt={((t_cvt-t0)*1000):.1f}ms detect={((t_detect-t_cvt)*1000):.1f}ms)")
             return None, is_blinking
@@ -481,7 +510,7 @@ class NoseFeatureExtractor:
         raw_nose_y = float(nose_tip[1] * h)
 
         squinting = self._detect_squint()
-        double_blink = self._detect_double_blink(is_blinking)
+        double_blink, triple_blink = self._detect_blinks(is_blinking)
         t_end = time.time()
 
         # Periodic extract_pose breakdown (every 30 frames)
@@ -504,6 +533,7 @@ class NoseFeatureExtractor:
             pitch=pitch,
             squinting=squinting,
             double_blink=double_blink,
+            triple_blink=triple_blink,
         ), is_blinking
 
     def close(self):

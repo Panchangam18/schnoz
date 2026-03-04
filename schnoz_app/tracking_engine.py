@@ -25,7 +25,6 @@ from schnoz_app.config import (
     SQUINT_RELEASE_DEBOUNCE,
     SQUINT_SUSTAIN_TIME,
 )
-from schnoz_app.core.double_take_detector import DoubleTakeDetector
 from schnoz_app.core.feature_extractor import NoseFeatureExtractor
 from schnoz_app.core.projection import NoseProjector
 from schnoz_app.core.smoother import KalmanEMASmoother, make_kalman
@@ -135,7 +134,6 @@ class TrackingEngine:
         )
         kalman = make_kalman(process_var=DEFAULT_PROCESS_VAR)
         smoother = KalmanEMASmoother(kalman, ema_alpha=DEFAULT_EMA_ALPHA)
-        double_take = DoubleTakeDetector()
 
         # Drag state
         drag_state = _DRAG_IDLE
@@ -197,8 +195,21 @@ class TrackingEngine:
                 did_click = False
 
                 if pose is not None:
+                    # --- Triple-blink right-click (checked before double-blink) ---
+                    if pose.triple_blink:
+                        if drag_state == _DRAG_ACTIVE:
+                            cursor_ctl.mouse_up()
+                        if drag_state != _DRAG_IDLE:
+                            extractor.unfreeze_baseline()
+                        drag_state = _DRAG_IDLE
+                        squint_release_time = None
+                        blink_freeze_until = 0.0
+                        cursor_ctl.right_click()
+                        did_click = True
+                        print(f"[schnoz] RIGHT-CLICK (triple-blink)")
+
                     # --- Double-blink click (works in any drag state) ---
-                    if pose.double_blink:
+                    elif pose.double_blink:
                         if drag_state == _DRAG_ACTIVE:
                             cursor_ctl.mouse_up()
                         if drag_state != _DRAG_IDLE:
@@ -236,7 +247,6 @@ class TrackingEngine:
                             drag_state = _DRAG_ACTIVE
                             drag_start_time = time.time()
                             squint_release_time = None
-                            double_take.reset()
                             print(f"[schnoz] DRAG START at ({drag_ema_x:.0f},{drag_ema_y:.0f})")
 
                     elif drag_state == _DRAG_ACTIVE:
@@ -255,13 +265,6 @@ class TrackingEngine:
                                 print(f"[schnoz] DRAG END (duration={drag_dur:.2f}s)")
                         else:
                             squint_release_time = None
-
-                    # --- Double-take detection (only when not dragging) ---
-                    if drag_state == _DRAG_IDLE:
-                        swipe_dir = double_take.update(pose.yaw)
-                        if swipe_dir is not None:
-                            keyboard_ctl.switch_space(swipe_dir)
-                            print(f"[schnoz] SWIPE {swipe_dir.upper()} (double-take)")
 
                 # --- Cursor movement ---
                 # During active drag, always move (squinting keeps eyes half-closed

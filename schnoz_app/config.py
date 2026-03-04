@@ -29,11 +29,5 @@ DEFAULT_SQUINT_THRESHOLD_RATIO = 0.85
 SQUINT_SUSTAIN_TIME = 0.5           # hold squint 0.5s before drag activates (filters blinks)
 SQUINT_RELEASE_DEBOUNCE = 0.0       # eyes open = immediate drag end
 
-# Double-take detection (space switching)
-DOUBLE_TAKE_TURN_THRESHOLD = 0.06
-DOUBLE_TAKE_RETURN_THRESHOLD = 0.03
-DOUBLE_TAKE_TIME_WINDOW = 1.2
-DOUBLE_TAKE_COOLDOWN = 1.5
-
 # Wispr Flow
 WISPRFLOW_API_KEY = "fl-48c6565f94a869138d5d81b9d672d834"

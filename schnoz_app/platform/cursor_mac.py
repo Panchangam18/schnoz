@@ -15,8 +15,11 @@ from Quartz import (
     kCGEventLeftMouseDragged,
     kCGEventLeftMouseUp,
     kCGEventMouseMoved,
+    kCGEventRightMouseDown,
+    kCGEventRightMouseUp,
     kCGHIDEventTap,
     kCGMouseButtonLeft,
+    kCGMouseButtonRight,
 )
 
 DEAD_ZONE_PX = 3
@@ -106,5 +109,16 @@ class CursorController:
         CGEventPost(kCGHIDEventTap, down)
         up = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseUp, pos, kCGMouseButtonLeft,
+        )
+        CGEventPost(kCGHIDEventTap, up)
+
+    def right_click(self):
+        pos = (self.last_x, self.last_y)
+        down = CGEventCreateMouseEvent(
+            None, kCGEventRightMouseDown, pos, kCGMouseButtonRight,
+        )
+        CGEventPost(kCGHIDEventTap, down)
+        up = CGEventCreateMouseEvent(
+            None, kCGEventRightMouseUp, pos, kCGMouseButtonRight,
         )
         CGEventPost(kCGHIDEventTap, up)
