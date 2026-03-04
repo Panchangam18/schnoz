@@ -27,6 +27,41 @@ from schnoz_app.core.projection import NoseProjector
 from schnoz_app.core.smoother import KalmanEMASmoother, make_kalman
 from schnoz_app.platform import CursorController, KeyboardController, get_screen_size
 
+class _FrameGrabber:
+    """Continuously reads camera frames in a background thread.
+
+    The main loop calls ``latest()`` to get the most recent frame
+    without blocking on the slow ``cap.read()`` call (~25 ms).
+    """
+
+    def __init__(self, cap: cv2.VideoCapture, stop_event: threading.Event):
+        self._cap = cap
+        self._stop = stop_event
+        self._lock = threading.Lock()
+        self._frame = None
+        self._new = False
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True, name="frame-grab")
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop.is_set():
+            ok, frame = self._cap.read()
+            if ok:
+                with self._lock:
+                    self._frame = frame
+                    self._new = True
+
+    def latest(self):
+        """Return (frame, is_new). Never blocks. Returns None if no frame yet."""
+        with self._lock:
+            frame = self._frame
+            is_new = self._new
+            self._new = False
+        return frame, is_new
+
+
 # Drag state constants
 _DRAG_IDLE = "idle"
 _DRAG_PENDING = "pending"
@@ -80,6 +115,9 @@ class TrackingEngine:
         cam_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         cam_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+        grabber = _FrameGrabber(cap, self._stop_event)
+        grabber.start()
+
         projector = NoseProjector(
             screen_w=screen_w,
             screen_h=screen_h,
@@ -117,9 +155,10 @@ class TrackingEngine:
                 loop_gap = t_loop_start - _last_loop_time
                 _last_loop_time = t_loop_start
 
-                ok, frame = cap.read()
+                frame, is_new_frame = grabber.latest()
                 t_after_read = time.time()
-                if not ok:
+                if frame is None or not is_new_frame:
+                    time.sleep(0.001)  # avoid busy-spinning while waiting for first/next frame
                     continue
 
                 pose, is_blinking = extractor.extract_pose(frame)
@@ -226,14 +265,14 @@ class TrackingEngine:
 
                 now_freeze = time.time()
                 if was_blinking_prev and not is_blinking:
-                    blink_freeze_until = now_freeze + 0.4
+                    blink_freeze_until = now_freeze + 0.1
                 was_blinking_prev = is_blinking
 
                 cursor_frozen = now_freeze < blink_freeze_until
-                can_move = pose is not None and not did_click and (drag_active or not double_take.mid_gesture)
+                can_move = pose is not None and not did_click
                 should_move = can_move and (drag_active or (not is_blinking and not cursor_frozen))
                 if not should_move and frame_count % 30 == 0:
-                    print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} mid_gesture={double_take.mid_gesture} drag_active={drag_active} blink={is_blinking} frozen={cursor_frozen}")
+                    print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} drag_active={drag_active} blink={is_blinking} frozen={cursor_frozen}")
                 if should_move:
                     t_proj_start = time.time()
                     if drag_active:

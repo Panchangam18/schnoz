@@ -15,14 +15,14 @@ ASSETS_DIR = BUNDLE_DIR / "assets"
 ICON_PATH = str(ASSETS_DIR / "schnoz_iconTemplate.png")
 
 # Tracking defaults
-DEFAULT_SENSITIVITY = 1.5
-DEFAULT_POSITION_SCALE = 2.0
-DEFAULT_EMA_ALPHA = 0.4
-DEFAULT_PROCESS_VAR = 15.0
+DEFAULT_SENSITIVITY = 0.8
+DEFAULT_POSITION_SCALE = 1.0
+DEFAULT_EMA_ALPHA = 0.65
+DEFAULT_PROCESS_VAR = 5.0
 DEFAULT_CAMERA_INDEX = 0
 
 # Squint detection (drag and drop)
-DEFAULT_SQUINT_THRESHOLD_RATIO = 0.90
+DEFAULT_SQUINT_THRESHOLD_RATIO = 0.85
 SQUINT_SUSTAIN_TIME = 1.0           # hold squint 1s before drag activates (filters blinks)
 SQUINT_RELEASE_DEBOUNCE = 0.0       # eyes open = immediate drag end
 
