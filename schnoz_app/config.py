@@ -16,6 +16,7 @@ ICON_PATH = str(ASSETS_DIR / "schnoz_iconTemplate.png")
 
 # Tracking defaults
 DEFAULT_SENSITIVITY = 0.8
+DEFAULT_ACCEL_EXPONENT = 1.8  # >1 = slow moves slower, fast moves faster
 DEFAULT_POSITION_SCALE = 1.0
 DEFAULT_EMA_ALPHA = 0.65
 DEFAULT_PROCESS_VAR = 5.0

@@ -19,6 +19,7 @@ class NoseProjector:
         cam_h: int = 480,
         sensitivity: float = 1.5,
         position_scale: float = 2.0,
+        accel_exponent: float = 1.0,
     ):
         self.screen_w = screen_w
         self.screen_h = screen_h
@@ -26,6 +27,7 @@ class NoseProjector:
         self.cam_h = cam_h
         self.sensitivity = sensitivity
         self.position_scale = position_scale
+        self.accel_exponent = accel_exponent
 
     def project(
         self,
@@ -43,8 +45,21 @@ class NoseProjector:
         head_y = self.screen_h / 2 + ny * pos_scale
 
         scale = self.sensitivity * self.screen_w
-        offset_x = math.tan(pitch) * scale
-        offset_y = math.tan(yaw) * scale
+        raw_ox = math.tan(pitch) * scale
+        raw_oy = math.tan(yaw) * scale
+
+        # Non-linear acceleration: raise normalized offset to accel_exponent.
+        # >1 dampens small movements, amplifies large ones.
+        if self.accel_exponent != 1.0:
+            half_w = self.screen_w / 2
+            half_h = self.screen_h / 2
+            norm_x = abs(raw_ox) / half_w  # 0..~1 range
+            norm_y = abs(raw_oy) / half_h
+            offset_x = math.copysign(half_w * norm_x ** self.accel_exponent, raw_ox)
+            offset_y = math.copysign(half_h * norm_y ** self.accel_exponent, raw_oy)
+        else:
+            offset_x = raw_ox
+            offset_y = raw_oy
 
         cx = head_x + offset_x
         cy = head_y + offset_y

@@ -13,6 +13,7 @@ import time
 import cv2
 
 from schnoz_app.config import (
+    DEFAULT_ACCEL_EXPONENT,
     DEFAULT_CAMERA_INDEX,
     DEFAULT_EMA_ALPHA,
     DEFAULT_POSITION_SCALE,
@@ -126,6 +127,7 @@ class TrackingEngine:
             cam_h=cam_h,
             sensitivity=DEFAULT_SENSITIVITY,
             position_scale=DEFAULT_POSITION_SCALE,
+            accel_exponent=DEFAULT_ACCEL_EXPONENT,
         )
         kalman = make_kalman(process_var=DEFAULT_PROCESS_VAR)
         smoother = KalmanEMASmoother(kalman, ema_alpha=DEFAULT_EMA_ALPHA)
