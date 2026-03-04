@@ -1,5 +1,6 @@
 """Constants and configuration for Schnoz desktop app."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +29,16 @@ DEFAULT_CAMERA_INDEX = 0
 DEFAULT_SQUINT_THRESHOLD_RATIO = 0.85
 SQUINT_SUSTAIN_TIME = 0.5           # hold squint 0.5s before drag activates (filters blinks)
 SQUINT_RELEASE_DEBOUNCE = 0.0       # eyes open = immediate drag end
+
+# Movement backend:
+#   True  -> use macOS Head Pointer for movement, Schnoz for click/drag/voice
+#   False -> use Schnoz cursor movement pipeline
+USE_APPLE_HEAD_POINTER = os.getenv("SCHNOZ_USE_APPLE_HEAD_POINTER", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 # Wispr Flow
 WISPRFLOW_API_KEY = "fl-48c6565f94a869138d5d81b9d672d834"

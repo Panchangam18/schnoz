@@ -16,9 +16,15 @@ import threading
 
 import rumps
 
-from schnoz_app.config import APP_NAME, ICON_PATH, WISPRFLOW_API_KEY
+from schnoz_app.config import (
+    APP_NAME,
+    ICON_PATH,
+    USE_APPLE_HEAD_POINTER,
+    WISPRFLOW_API_KEY,
+)
 from schnoz_app.hotkey_listener import HotkeyListener
 from schnoz_app.mouse_monitor import MouseMonitor
+from schnoz_app.platform import is_head_pointer_enabled, set_head_pointer_enabled
 from schnoz_app.tracking_engine import TrackingEngine
 from schnoz_app.wispr_engine import start_wispr_thread
 
@@ -72,6 +78,9 @@ class SchnozApp(rumps.App):
         self._wispr_text_queue = None
         self._wispr_loop: asyncio.AbstractEventLoop | None = None
         self._wispr_client = None
+        self._use_apple_head_pointer = USE_APPLE_HEAD_POINTER
+        self._head_pointer_was_enabled = False
+        self._head_pointer_enabled_by_app = False
 
         # Menu items
         self._regular_item = rumps.MenuItem("Regular  ⌘↩", callback=self._menu_regular)
@@ -103,6 +112,10 @@ class SchnozApp(rumps.App):
         self._hotkeys.start()
         print(f"[schnoz] {APP_NAME} is running")
         print("[schnoz] Cmd+Enter = Regular Mode, Cmd+Shift+Enter = Ultra Schnoz")
+        if self._use_apple_head_pointer:
+            print("[schnoz] Movement backend: Apple Head Pointer (shortcut-based)")
+        else:
+            print("[schnoz] Movement backend: Schnoz cursor pipeline")
 
     # -- Hotkey callbacks (called from pynput thread) -----------------------
 
@@ -167,9 +180,22 @@ class SchnozApp(rumps.App):
 
     def _start_tracking(self):
         if self._tracker is None or not self._tracker.running:
-            self._tracker = TrackingEngine(mouse_monitor=self._mouse_monitor)
+            if self._use_apple_head_pointer:
+                self._head_pointer_was_enabled = is_head_pointer_enabled()
+                enabled_now = set_head_pointer_enabled(True)
+                self._head_pointer_enabled_by_app = enabled_now and not self._head_pointer_was_enabled
+                if enabled_now:
+                    print("[schnoz] Head Pointer enabled")
+                else:
+                    print("[schnoz] Could not enable Head Pointer (check shortcut setup/permissions)")
+
+            self._tracker = TrackingEngine(
+                mouse_monitor=self._mouse_monitor,
+                use_apple_head_pointer=self._use_apple_head_pointer,
+            )
             self._tracker.start()
-            self._mouse_monitor.enable()
+            if not self._use_apple_head_pointer:
+                self._mouse_monitor.enable()
             print(f"[schnoz] Tracking started")
 
     def _start_wispr(self):
@@ -204,6 +230,12 @@ class SchnozApp(rumps.App):
             self._tracker.stop()
             self._tracker = None
             print("[schnoz] Tracking stopped")
+        if self._use_apple_head_pointer and self._head_pointer_enabled_by_app:
+            if set_head_pointer_enabled(False):
+                print("[schnoz] Head Pointer restored to off")
+            else:
+                print("[schnoz] Failed to restore Head Pointer state")
+            self._head_pointer_enabled_by_app = False
 
     def _stop_all(self):
         self._stop_wispr()

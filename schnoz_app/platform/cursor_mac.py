@@ -8,7 +8,9 @@ import numpy as np
 from AppKit import NSCursor
 from Quartz import (
     CGDisplayBounds,
+    CGEventCreate,
     CGEventCreateMouseEvent,
+    CGEventGetLocation,
     CGEventPost,
     CGMainDisplayID,
     kCGEventLeftMouseDown,
@@ -60,7 +62,15 @@ class CursorController:
             cg_ms = (time.time() - t0) * 1000
             print(f"[schnoz-debug] cursor move #{self._move_count}: CGEventPost={cg_ms:.2f}ms pos=({x:.0f},{y:.0f})")
 
+    def _sync_to_current_cursor(self):
+        """Refresh cached position from the actual system cursor location."""
+        event = CGEventCreate(None)
+        loc = CGEventGetLocation(event)
+        self.last_x = float(loc.x)
+        self.last_y = float(loc.y)
+
     def mouse_down(self):
+        self._sync_to_current_cursor()
         pos = (self.last_x, self.last_y)
         down = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseDown, pos, kCGMouseButtonLeft,
@@ -70,6 +80,7 @@ class CursorController:
         NSCursor.closedHandCursor().set()
 
     def mouse_up(self):
+        self._sync_to_current_cursor()
         pos = (self.last_x, self.last_y)
         up = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseUp, pos, kCGMouseButtonLeft,
@@ -96,6 +107,7 @@ class CursorController:
             print(f"[schnoz-debug] drag_move #{self._drag_move_count}: CGEventPost={cg_ms:.2f}ms pos=({x:.0f},{y:.0f})")
 
     def click(self):
+        self._sync_to_current_cursor()
         pos = (self.last_x, self.last_y)
         down = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseDown, pos, kCGMouseButtonLeft,
@@ -107,6 +119,7 @@ class CursorController:
         CGEventPost(kCGHIDEventTap, up)
 
     def right_click(self):
+        self._sync_to_current_cursor()
         pos = (self.last_x, self.last_y)
         down = CGEventCreateMouseEvent(
             None, kCGEventRightMouseDown, pos, kCGMouseButtonRight,

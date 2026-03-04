@@ -74,11 +74,17 @@ _DRAG_ACTIVE = "active"
 class TrackingEngine:
     """Stoppable nose-tracking thread."""
 
-    def __init__(self, text_queue: queue.Queue | None = None, mouse_monitor=None):
+    def __init__(
+        self,
+        text_queue: queue.Queue | None = None,
+        mouse_monitor=None,
+        use_apple_head_pointer: bool = False,
+    ):
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._text_queue = text_queue
         self._mouse_monitor = mouse_monitor
+        self._use_apple_head_pointer = use_apple_head_pointer
 
     @property
     def running(self) -> bool:
@@ -121,19 +127,22 @@ class TrackingEngine:
         grabber = _FrameGrabber(cap, self._stop_event)
         grabber.start()
 
-        projector = NoseProjector(
-            screen_w=screen_w,
-            screen_h=screen_h,
-            cam_w=cam_w,
-            cam_h=cam_h,
-            sensitivity=DEFAULT_SENSITIVITY,
-            vertical_sensitivity=DEFAULT_VERTICAL_SENSITIVITY,
-            position_scale=DEFAULT_POSITION_SCALE,
-            horizontal_position_scale=DEFAULT_HORIZONTAL_POSITION_SCALE,
-            accel_exponent=DEFAULT_ACCEL_EXPONENT,
-        )
-        kalman = make_kalman(process_var=DEFAULT_PROCESS_VAR)
-        smoother = KalmanEMASmoother(kalman, ema_alpha=DEFAULT_EMA_ALPHA)
+        projector = None
+        smoother = None
+        if not self._use_apple_head_pointer:
+            projector = NoseProjector(
+                screen_w=screen_w,
+                screen_h=screen_h,
+                cam_w=cam_w,
+                cam_h=cam_h,
+                sensitivity=DEFAULT_SENSITIVITY,
+                vertical_sensitivity=DEFAULT_VERTICAL_SENSITIVITY,
+                position_scale=DEFAULT_POSITION_SCALE,
+                horizontal_position_scale=DEFAULT_HORIZONTAL_POSITION_SCALE,
+                accel_exponent=DEFAULT_ACCEL_EXPONENT,
+            )
+            kalman = make_kalman(process_var=DEFAULT_PROCESS_VAR)
+            smoother = KalmanEMASmoother(kalman, ema_alpha=DEFAULT_EMA_ALPHA)
 
         # Drag state
         drag_state = _DRAG_IDLE
@@ -235,19 +244,26 @@ class TrackingEngine:
                             extractor.unfreeze_baseline()
                             print(f"[schnoz-debug] DRAG PENDING→IDLE (squint released after {held:.2f}s)")
                         elif time.time() - squint_start_time >= SQUINT_SUSTAIN_TIME:
-                            drag_frozen_yaw = pose.yaw
-                            drag_frozen_pitch = pose.pitch
-                            cx, cy = projector.project(
-                                pose.raw_nose_x, pose.raw_nose_y,
-                                drag_frozen_yaw, drag_frozen_pitch,
-                            )
-                            drag_ema_x = cx
-                            drag_ema_y = cy
+                            if self._use_apple_head_pointer:
+                                drag_ema_x = cursor_ctl.last_x
+                                drag_ema_y = cursor_ctl.last_y
+                            else:
+                                drag_frozen_yaw = pose.yaw
+                                drag_frozen_pitch = pose.pitch
+                                cx, cy = projector.project(
+                                    pose.raw_nose_x, pose.raw_nose_y,
+                                    drag_frozen_yaw, drag_frozen_pitch,
+                                )
+                                drag_ema_x = cx
+                                drag_ema_y = cy
                             cursor_ctl.mouse_down()
                             drag_state = _DRAG_ACTIVE
                             drag_start_time = time.time()
                             squint_release_time = None
-                            print(f"[schnoz] DRAG START at ({drag_ema_x:.0f},{drag_ema_y:.0f})")
+                            if self._use_apple_head_pointer:
+                                print("[schnoz] DRAG START (apple head pointer mode)")
+                            else:
+                                print(f"[schnoz] DRAG START at ({drag_ema_x:.0f},{drag_ema_y:.0f})")
 
                     elif drag_state == _DRAG_ACTIVE:
                         eyes_relaxed = not pose.squinting and not is_blinking
@@ -257,7 +273,8 @@ class TrackingEngine:
                                 print(f"[schnoz-debug] DRAG ACTIVE: eyes relaxed, starting release debounce")
                             elif time.time() - squint_release_time >= SQUINT_RELEASE_DEBOUNCE:
                                 drag_dur = time.time() - drag_start_time
-                                smoother.snap_to(int(drag_ema_x), int(drag_ema_y))
+                                if smoother is not None:
+                                    smoother.snap_to(int(drag_ema_x), int(drag_ema_y))
                                 cursor_ctl.mouse_up()
                                 drag_state = _DRAG_IDLE
                                 extractor.unfreeze_baseline()
@@ -284,7 +301,7 @@ class TrackingEngine:
                 should_move = can_move and (drag_active or (not is_blinking and not cursor_frozen))
                 if not should_move and frame_count % 30 == 0:
                     print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} drag_active={drag_active} blink={is_blinking} frozen={cursor_frozen}")
-                if should_move:
+                if should_move and not self._use_apple_head_pointer:
                     t_proj_start = time.time()
                     cx, cy = projector.project(
                         pose.raw_nose_x, pose.raw_nose_y,
