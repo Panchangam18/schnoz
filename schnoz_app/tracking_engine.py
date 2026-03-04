@@ -18,6 +18,7 @@ from schnoz_app.config import (
     DEFAULT_POSITION_SCALE,
     DEFAULT_PROCESS_VAR,
     DEFAULT_SENSITIVITY,
+    DEFAULT_SQUINT_THRESHOLD_RATIO,
     SQUINT_RELEASE_DEBOUNCE,
     SQUINT_SUSTAIN_TIME,
 )
@@ -271,7 +272,7 @@ class TrackingEngine:
                 cursor_frozen = now_freeze < blink_freeze_until
                 drag_pending = drag_state == _DRAG_PENDING
                 can_move = pose is not None and not did_click
-                should_move = can_move and (drag_active or (not drag_pending and not is_blinking and not cursor_frozen))
+                should_move = can_move and (drag_active or (not is_blinking and not cursor_frozen))
                 if not should_move and frame_count % 30 == 0:
                     print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} drag_active={drag_active} blink={is_blinking} frozen={cursor_frozen}")
                 if should_move:
@@ -298,6 +299,20 @@ class TrackingEngine:
                         sx, sy = int(drag_ema_x), int(drag_ema_y)
                         if frame_count % 10 == 0:
                             print(f"[schnoz-debug] frame {frame_count}: DRAG EMA old=({old_ema_x:.0f},{old_ema_y:.0f}) proj=({cx:.0f},{cy:.0f}) new=({drag_ema_x:.0f},{drag_ema_y:.0f}) final=({sx},{sy})")
+                    elif drag_pending:
+                        # Weighted pending: slow cursor proportionally to squint depth.
+                        # EAR at squint threshold → speed_factor=0 (frozen)
+                        # EAR at 0.4 above squint threshold → speed_factor=1 (full speed)
+                        baseline = extractor._open_baseline
+                        squint_floor = baseline * DEFAULT_SQUINT_THRESHOLD_RATIO
+                        ear = extractor._last_ear
+                        speed_range = 0.4 * baseline  # EAR range over which speed ramps
+                        speed_factor = max(0.0, min(1.0, (ear - squint_floor) / (speed_range + 1e-9)))
+                        # Blend smoothed position toward projected position by speed_factor
+                        full_sx, full_sy = smoother.step(int(cx), int(cy))
+                        prev_x, prev_y = cursor_ctl.last_x, cursor_ctl.last_y
+                        sx = int(prev_x + (full_sx - prev_x) * speed_factor)
+                        sy = int(prev_y + (full_sy - prev_y) * speed_factor)
                     else:
                         sx, sy = smoother.step(int(cx), int(cy))
                     if frame_count <= 5:
