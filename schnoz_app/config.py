@@ -15,7 +15,7 @@ ASSETS_DIR = BUNDLE_DIR / "assets"
 ICON_PATH = str(ASSETS_DIR / "schnoz_iconTemplate.png")
 
 # Tracking defaults
-DEFAULT_SENSITIVITY = 1.5
+DEFAULT_SENSITIVITY = 1.0
 DEFAULT_ACCEL_EXPONENT = 2.0  # >1 = slow moves slower, fast moves faster
 DEFAULT_POSITION_SCALE = 2.0
 DEFAULT_EMA_ALPHA = 0.70
