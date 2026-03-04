@@ -269,8 +269,9 @@ class TrackingEngine:
                 was_blinking_prev = is_blinking
 
                 cursor_frozen = now_freeze < blink_freeze_until
+                drag_pending = drag_state == _DRAG_PENDING
                 can_move = pose is not None and not did_click
-                should_move = can_move and (drag_active or (not is_blinking and not cursor_frozen))
+                should_move = can_move and (drag_active or (not drag_pending and not is_blinking and not cursor_frozen))
                 if not should_move and frame_count % 30 == 0:
                     print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} drag_active={drag_active} blink={is_blinking} frozen={cursor_frozen}")
                 if should_move:

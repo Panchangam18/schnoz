@@ -23,7 +23,7 @@ DEFAULT_CAMERA_INDEX = 0
 
 # Squint detection (drag and drop)
 DEFAULT_SQUINT_THRESHOLD_RATIO = 0.85
-SQUINT_SUSTAIN_TIME = 1.0           # hold squint 1s before drag activates (filters blinks)
+SQUINT_SUSTAIN_TIME = 0.5           # hold squint 0.5s before drag activates (filters blinks)
 SQUINT_RELEASE_DEBOUNCE = 0.0       # eyes open = immediate drag end
 
 # Double-take detection (space switching)
