@@ -279,28 +279,15 @@ class TrackingEngine:
                     print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} drag_active={drag_active} blink={is_blinking} frozen={cursor_frozen}")
                 if should_move:
                     t_proj_start = time.time()
+                    cx, cy = projector.project(
+                        pose.raw_nose_x, pose.raw_nose_y,
+                        pose.yaw, pose.pitch,
+                    )
                     if drag_active:
-                        # During drag, use frozen yaw/pitch from drag start
-                        # to eliminate squint-induced angular jitter.
-                        cx, cy = projector.project(
-                            pose.raw_nose_x, pose.raw_nose_y,
-                            drag_frozen_yaw, drag_frozen_pitch,
-                        )
-                    else:
-                        cx, cy = projector.project(
-                            pose.raw_nose_x, pose.raw_nose_y,
-                            pose.yaw, pose.pitch,
-                        )
-                    if drag_active:
-                        # During drag, bypass smoother for responsive movement.
-                        # Use light EMA (low alpha = less smoothing = more responsive).
-                        drag_alpha = 0.15
-                        old_ema_x, old_ema_y = drag_ema_x, drag_ema_y
-                        drag_ema_x = drag_alpha * drag_ema_x + (1.0 - drag_alpha) * cx
-                        drag_ema_y = drag_alpha * drag_ema_y + (1.0 - drag_alpha) * cy
-                        sx, sy = int(drag_ema_x), int(drag_ema_y)
+                        # During drag, use same smoother as normal movement
+                        sx, sy = smoother.step(int(cx), int(cy))
                         if frame_count % 10 == 0:
-                            print(f"[schnoz-debug] frame {frame_count}: DRAG EMA old=({old_ema_x:.0f},{old_ema_y:.0f}) proj=({cx:.0f},{cy:.0f}) new=({drag_ema_x:.0f},{drag_ema_y:.0f}) final=({sx},{sy})")
+                            print(f"[schnoz-debug] frame {frame_count}: DRAG proj=({cx:.0f},{cy:.0f}) smooth=({sx},{sy})")
                     elif drag_pending:
                         # Weighted pending: slow cursor proportionally to squint depth.
                         # EAR at squint threshold → speed_factor=0 (frozen)
