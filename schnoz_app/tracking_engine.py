@@ -16,9 +16,11 @@ from schnoz_app.config import (
     DEFAULT_ACCEL_EXPONENT,
     DEFAULT_CAMERA_INDEX,
     DEFAULT_EMA_ALPHA,
+    DEFAULT_HORIZONTAL_POSITION_SCALE,
     DEFAULT_POSITION_SCALE,
     DEFAULT_PROCESS_VAR,
     DEFAULT_SENSITIVITY,
+    DEFAULT_VERTICAL_SENSITIVITY,
     DEFAULT_SQUINT_THRESHOLD_RATIO,
     SQUINT_RELEASE_DEBOUNCE,
     SQUINT_SUSTAIN_TIME,
@@ -126,7 +128,9 @@ class TrackingEngine:
             cam_w=cam_w,
             cam_h=cam_h,
             sensitivity=DEFAULT_SENSITIVITY,
+            vertical_sensitivity=DEFAULT_VERTICAL_SENSITIVITY,
             position_scale=DEFAULT_POSITION_SCALE,
+            horizontal_position_scale=DEFAULT_HORIZONTAL_POSITION_SCALE,
             accel_exponent=DEFAULT_ACCEL_EXPONENT,
         )
         kalman = make_kalman(process_var=DEFAULT_PROCESS_VAR)

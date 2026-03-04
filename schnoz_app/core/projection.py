@@ -18,7 +18,9 @@ class NoseProjector:
         cam_w: int = 640,
         cam_h: int = 480,
         sensitivity: float = 1.5,
+        vertical_sensitivity: float = 2.5,
         position_scale: float = 2.0,
+        horizontal_position_scale: float | None = None,
         accel_exponent: float = 1.0,
     ):
         self.screen_w = screen_w
@@ -26,7 +28,9 @@ class NoseProjector:
         self.cam_w = cam_w
         self.cam_h = cam_h
         self.sensitivity = sensitivity
+        self.vertical_sensitivity = vertical_sensitivity
         self.position_scale = position_scale
+        self.horizontal_position_scale = horizontal_position_scale if horizontal_position_scale is not None else position_scale
         self.accel_exponent = accel_exponent
 
     def project(
@@ -40,9 +44,10 @@ class NoseProjector:
         nx = (raw_nose_x / self.cam_w) - 0.5
         ny = (raw_nose_y / self.cam_h) - 0.5
 
-        pos_scale = self.position_scale * self.screen_w
-        head_x = self.screen_w / 2 - nx * pos_scale
-        head_y = self.screen_h / 2 + ny * pos_scale
+        pos_scale_x = self.horizontal_position_scale * self.screen_w
+        pos_scale_y = self.position_scale * self.screen_w
+        head_x = self.screen_w / 2 - nx * pos_scale_x
+        head_y = self.screen_h / 2 + ny * pos_scale_y
 
         scale = self.sensitivity * self.screen_w
         raw_ox = math.tan(pitch) * scale
