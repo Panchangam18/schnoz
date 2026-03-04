@@ -82,12 +82,6 @@ class CursorController:
         x = float(np.clip(x, 0, self.screen_w))
         y = float(np.clip(y, 0, self.screen_h))
 
-        if abs(x - self.last_x) < DEAD_ZONE_PX and abs(y - self.last_y) < DEAD_ZONE_PX:
-            self._drag_move_count += 1
-            if self._drag_move_count % 30 == 0:
-                print(f"[schnoz-debug] drag_move #{self._drag_move_count}: DEAD ZONE skip req=({x:.0f},{y:.0f}) last=({self.last_x:.0f},{self.last_y:.0f})")
-            return
-
         self.last_x = x
         self.last_y = y
 

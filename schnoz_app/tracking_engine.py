@@ -291,12 +291,9 @@ class TrackingEngine:
                         pose.yaw, pose.pitch,
                     )
                     if drag_active:
-                        # During drag, use lightweight EMA for responsiveness
-                        # (Kalman+EMA smoother lags too much during fast drags)
-                        drag_alpha = 0.3  # lower = more responsive
-                        drag_ema_x = drag_alpha * drag_ema_x + (1.0 - drag_alpha) * cx
-                        drag_ema_y = drag_alpha * drag_ema_y + (1.0 - drag_alpha) * cy
-                        sx, sy = int(drag_ema_x), int(drag_ema_y)
+                        # During drag, use raw projected coordinates for zero lag
+                        sx, sy = int(cx), int(cy)
+                        drag_ema_x, drag_ema_y = float(sx), float(sy)
                         # Keep the main smoother in sync so transition back is smooth
                         smoother.snap_to(sx, sy)
                         prev_cx, prev_cy = cursor_ctl.last_x, cursor_ctl.last_y
