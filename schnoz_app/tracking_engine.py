@@ -101,14 +101,40 @@ class TrackingEngine:
         drag_ema_y = 0.0
 
         frame_count = 0
+        _last_fps_time = time.time()
+        _fps_frame_count = 0
+        _last_loop_time = time.time()
         try:
             while not self._stop_event.is_set():
+                t_loop_start = time.time()
+                loop_gap = t_loop_start - _last_loop_time
+                _last_loop_time = t_loop_start
+
                 ok, frame = cap.read()
+                t_after_read = time.time()
                 if not ok:
                     continue
 
                 pose, is_blinking = extractor.extract_pose(frame)
+                t_after_pose = time.time()
                 frame_count += 1
+                _fps_frame_count += 1
+
+                # Periodic FPS + timing report (every 60 frames)
+                if _fps_frame_count >= 60:
+                    elapsed = time.time() - _last_fps_time
+                    fps = _fps_frame_count / elapsed if elapsed > 0 else 0
+                    print(f"[schnoz-debug] FPS={fps:.1f} (last {_fps_frame_count} frames in {elapsed:.2f}s)")
+                    _fps_frame_count = 0
+                    _last_fps_time = time.time()
+
+                # Per-frame timing (every 30 frames to avoid spam)
+                if frame_count % 30 == 0:
+                    read_ms = (t_after_read - t_loop_start) * 1000
+                    pose_ms = (t_after_pose - t_after_read) * 1000
+                    gap_ms = loop_gap * 1000
+                    cur_x, cur_y = cursor_ctl.last_x, cursor_ctl.last_y
+                    print(f"[schnoz-debug] frame {frame_count}: loop_gap={gap_ms:.1f}ms cam_read={read_ms:.1f}ms pose={pose_ms:.1f}ms drag={drag_state} cursor=({cur_x:.0f},{cur_y:.0f})")
 
                 if frame_count <= 5:
                     print(f"[schnoz] frame {frame_count}: pose={pose is not None}, blinking={is_blinking}")
@@ -135,11 +161,14 @@ class TrackingEngine:
                             drag_state = _DRAG_PENDING
                             squint_start_time = time.time()
                             extractor.freeze_baseline()
+                            print(f"[schnoz-debug] DRAG IDLE→PENDING (squint detected, EAR={extractor._last_ear:.3f} baseline={extractor._open_baseline:.3f})")
 
                     elif drag_state == _DRAG_PENDING:
                         if not pose.squinting:
+                            held = time.time() - squint_start_time
                             drag_state = _DRAG_IDLE
                             extractor.unfreeze_baseline()
+                            print(f"[schnoz-debug] DRAG PENDING→IDLE (squint released after {held:.2f}s)")
                         elif time.time() - squint_start_time >= SQUINT_SUSTAIN_TIME:
                             cx, cy = projector.project(
                                 pose.raw_nose_x, pose.raw_nose_y,
@@ -151,20 +180,23 @@ class TrackingEngine:
                             drag_state = _DRAG_ACTIVE
                             drag_start_time = time.time()
                             squint_release_time = None
-                            print("[schnoz] DRAG START")
+                            double_take.reset()
+                            print(f"[schnoz] DRAG START at ({drag_ema_x:.0f},{drag_ema_y:.0f})")
 
                     elif drag_state == _DRAG_ACTIVE:
                         eyes_relaxed = not pose.squinting and not is_blinking
                         if eyes_relaxed:
                             if squint_release_time is None:
                                 squint_release_time = time.time()
+                                print(f"[schnoz-debug] DRAG ACTIVE: eyes relaxed, starting release debounce")
                             elif time.time() - squint_release_time >= SQUINT_RELEASE_DEBOUNCE:
+                                drag_dur = time.time() - drag_start_time
                                 smoother.snap_to(int(drag_ema_x), int(drag_ema_y))
                                 cursor_ctl.mouse_up()
                                 drag_state = _DRAG_IDLE
                                 extractor.unfreeze_baseline()
                                 squint_release_time = None
-                                print("[schnoz] DRAG END")
+                                print(f"[schnoz] DRAG END (duration={drag_dur:.2f}s)")
                         else:
                             squint_release_time = None
 
@@ -176,19 +208,30 @@ class TrackingEngine:
                             print(f"[schnoz] SWIPE {swipe_dir.upper()} (double-take)")
 
                 # --- Cursor movement ---
-                # Freeze cursor during pending squint and double-take gesture
-                if pose is not None and not is_blinking and not did_click and not double_take.mid_gesture and drag_state != _DRAG_PENDING:
+                # During active drag, always move (squinting keeps eyes half-closed
+                # which registers as "blinking" — ignore that).
+                # Otherwise freeze cursor during blinks and double-take.
+                drag_active = drag_state == _DRAG_ACTIVE
+                can_move = pose is not None and not did_click and (drag_active or not double_take.mid_gesture)
+                should_move = can_move and (drag_active or not is_blinking)
+                if not should_move and frame_count % 30 == 0:
+                    print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} mid_gesture={double_take.mid_gesture} drag_active={drag_active} blink={is_blinking}")
+                if should_move:
+                    t_proj_start = time.time()
                     cx, cy = projector.project(
                         pose.raw_nose_x, pose.raw_nose_y,
                         pose.yaw, pose.pitch,
                     )
-                    if drag_state == _DRAG_ACTIVE:
+                    if drag_active:
                         # During drag, bypass smoother for responsive movement.
-                        # Use light EMA only (no Kalman) to reduce jitter.
-                        drag_alpha = 0.3  # lower = more responsive
+                        # Use light EMA (low alpha = less smoothing = more responsive).
+                        drag_alpha = 0.15
+                        old_ema_x, old_ema_y = drag_ema_x, drag_ema_y
                         drag_ema_x = drag_alpha * drag_ema_x + (1.0 - drag_alpha) * cx
                         drag_ema_y = drag_alpha * drag_ema_y + (1.0 - drag_alpha) * cy
                         sx, sy = int(drag_ema_x), int(drag_ema_y)
+                        if frame_count % 10 == 0:
+                            print(f"[schnoz-debug] frame {frame_count}: DRAG EMA old=({old_ema_x:.0f},{old_ema_y:.0f}) proj=({cx:.0f},{cy:.0f}) new=({drag_ema_x:.0f},{drag_ema_y:.0f}) final=({sx},{sy})")
                     else:
                         sx, sy = smoother.step(int(cx), int(cy))
                     if frame_count <= 5:
@@ -197,6 +240,14 @@ class TrackingEngine:
                     if self._mouse_monitor is not None:
                         self._mouse_monitor.report_programmatic_move(float(sx), float(sy))
                     cursor_ctl.move(sx, sy)
+                    t_move_done = time.time()
+
+                    # Periodic mouse movement timing (every 30 frames)
+                    if frame_count % 30 == 0:
+                        proj_ms = (t_move_done - t_proj_start) * 1000
+                        total_ms = (t_move_done - t_loop_start) * 1000
+                        mode = "DRAG" if drag_active else "NORMAL"
+                        print(f"[schnoz-debug] frame {frame_count}: {mode} move→({sx},{sy}) proj+move={proj_ms:.1f}ms total_frame={total_ms:.1f}ms")
 
                 # Poll for transcribed text from Wispr (Ultra mode)
                 text_q = self._text_queue

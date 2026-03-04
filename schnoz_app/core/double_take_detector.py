@@ -55,6 +55,11 @@ class DoubleTakeDetector:
         """True if currently tracking a potential double-take."""
         return self._state in (_State.FIRST_TURN, _State.RETURNED)
 
+    def reset(self):
+        """Reset to idle (e.g. when drag starts and we don't want stale state)."""
+        self._state = _State.IDLE
+        self._direction = None
+
     def update(self, yaw: float) -> str | None:
         """
         Feed a yaw value (radians). Returns 'left', 'right', or None.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 from Quartz import (
     CGDisplayBounds,
@@ -28,6 +30,8 @@ class CursorController:
         self.last_x = self.screen_w / 2.0
         self.last_y = self.screen_h / 2.0
         self._dragging = False
+        self._move_count = 0
+        self._drag_move_count = 0
 
     def move(self, x, y):
         if self._dragging:
@@ -42,10 +46,15 @@ class CursorController:
         self.last_x = x
         self.last_y = y
 
+        t0 = time.time()
         event = CGEventCreateMouseEvent(
             None, kCGEventMouseMoved, (x, y), kCGMouseButtonLeft,
         )
         CGEventPost(kCGHIDEventTap, event)
+        self._move_count += 1
+        if self._move_count % 30 == 0:
+            cg_ms = (time.time() - t0) * 1000
+            print(f"[schnoz-debug] cursor move #{self._move_count}: CGEventPost={cg_ms:.2f}ms pos=({x:.0f},{y:.0f})")
 
     def mouse_down(self):
         pos = (self.last_x, self.last_y)
@@ -68,15 +77,23 @@ class CursorController:
         y = float(np.clip(y, 0, self.screen_h))
 
         if abs(x - self.last_x) < DEAD_ZONE_PX and abs(y - self.last_y) < DEAD_ZONE_PX:
+            self._drag_move_count += 1
+            if self._drag_move_count % 30 == 0:
+                print(f"[schnoz-debug] drag_move #{self._drag_move_count}: DEAD ZONE skip req=({x:.0f},{y:.0f}) last=({self.last_x:.0f},{self.last_y:.0f})")
             return
 
         self.last_x = x
         self.last_y = y
 
+        t0 = time.time()
         event = CGEventCreateMouseEvent(
             None, kCGEventLeftMouseDragged, (x, y), kCGMouseButtonLeft,
         )
         CGEventPost(kCGHIDEventTap, event)
+        self._drag_move_count += 1
+        if self._drag_move_count % 10 == 0:
+            cg_ms = (time.time() - t0) * 1000
+            print(f"[schnoz-debug] drag_move #{self._drag_move_count}: CGEventPost={cg_ms:.2f}ms pos=({x:.0f},{y:.0f})")
 
     def click(self):
         pos = (self.last_x, self.last_y)

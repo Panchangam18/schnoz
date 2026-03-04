@@ -26,7 +26,7 @@ def _get_cursor_pos() -> tuple[float, float]:
 _DEVIATION_THRESHOLD = 30.0
 
 # How often to check (seconds)
-_POLL_INTERVAL = 0.05
+_POLL_INTERVAL = 0.1
 
 
 class MouseMonitor:
@@ -72,9 +72,10 @@ class MouseMonitor:
             self._has_expected = True
 
     def _run(self):
-        _debug_count = 0
         _consecutive_deviations = 0
+        _poll_count = 0
         while not self._stop_event.is_set():
+            t_poll_start = time.time()
             time.sleep(_POLL_INTERVAL)
 
             if not self._enabled:
@@ -87,19 +88,19 @@ class MouseMonitor:
                     continue
                 ex, ey = self._expected_x, self._expected_y
 
-            # Get actual cursor position
             ax, ay = _get_cursor_pos()
-
+            t_poll_end = time.time()
             dx = abs(ax - ex)
             dy = abs(ay - ey)
 
-            _debug_count += 1
-            if _debug_count <= 10 or _debug_count % 100 == 0:
-                print(f"[mouse-monitor] poll #{_debug_count}: expected=({ex:.0f},{ey:.0f}) actual=({ax:.0f},{ay:.0f}) delta=({dx:.0f},{dy:.0f})")
+            _poll_count += 1
+            # Periodic poll timing (every 50 polls ~ every 5s)
+            if _poll_count % 50 == 0:
+                poll_ms = (t_poll_end - t_poll_start) * 1000
+                print(f"[schnoz-debug] mouse_monitor poll #{_poll_count}: poll_time={poll_ms:.1f}ms actual=({ax:.0f},{ay:.0f}) expected=({ex:.0f},{ey:.0f}) delta=({dx:.0f},{dy:.0f})")
 
             if dx > _DEVIATION_THRESHOLD or dy > _DEVIATION_THRESHOLD:
                 _consecutive_deviations += 1
-                # Require 2 consecutive deviations to filter out race conditions
                 if _consecutive_deviations >= 2:
                     print(f"[mouse-monitor] EXTERNAL MOUSE DETECTED! delta=({dx:.0f},{dy:.0f})")
                     self._enabled = False

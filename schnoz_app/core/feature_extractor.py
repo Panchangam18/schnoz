@@ -5,6 +5,7 @@ Adapted from schnoz/feature_extractor.py with squint calibration/detection remov
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 import time
@@ -48,6 +49,10 @@ RIGHT_EYE_INNER = 362
 RIGHT_EYE_OUTER = 263
 RIGHT_EYE_TOP = 386
 RIGHT_EYE_BOTTOM = 374
+
+# Indices needed for fast pose path (scaffold + nose tip only, no eyes —
+# EAR uses raw landmarks directly via _compute_ear_fast).
+_SCAFFOLD_POSE_INDICES = SCAFFOLD_INDICES + [NOSE_TIP]  # 11 landmarks
 
 _DEFAULT_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
@@ -161,7 +166,7 @@ class NoseFeatureExtractor:
         self,
         face_landmarker_model: str | os.PathLike[str] | None = None,
         ear_history_len: int = 90,
-        blink_threshold_ratio: float = 0.75,
+        blink_threshold_ratio: float = 0.55,
         squint_threshold_ratio: float = DEFAULT_SQUINT_THRESHOLD_RATIO,
         min_history: int = 30,
     ):
@@ -185,8 +190,23 @@ class NoseFeatureExtractor:
         self._blink_end_times: list[float] = []
         self._last_double_blink_time = 0.0
 
+    @staticmethod
+    def _compute_ear_fast(landmarks) -> float:
+        """Compute EAR from raw MediaPipe landmarks using pure Python math."""
+        def _d(a, b):
+            return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
+
+        lm = landmarks
+        left_w = _d(lm[LEFT_EYE_OUTER], lm[LEFT_EYE_INNER])
+        left_h = _d(lm[LEFT_EYE_TOP], lm[LEFT_EYE_BOTTOM])
+        right_w = _d(lm[RIGHT_EYE_OUTER], lm[RIGHT_EYE_INNER])
+        right_h = _d(lm[RIGHT_EYE_TOP], lm[RIGHT_EYE_BOTTOM])
+        left_ear = left_h / (left_w + 1e-9)
+        right_ear = right_h / (right_w + 1e-9)
+        return (left_ear + right_ear) / 2.0
+
     def _compute_ear(self, all_points: np.ndarray) -> float:
-        """Compute Eye Aspect Ratio (EAR) from face landmarks."""
+        """Compute Eye Aspect Ratio (EAR) from face landmarks (numpy path)."""
         left_inner = all_points[LEFT_EYE_INNER, :2]
         left_outer = all_points[LEFT_EYE_OUTER, :2]
         left_top = all_points[LEFT_EYE_TOP, :2]
@@ -215,28 +235,40 @@ class NoseFeatureExtractor:
         """Resume updating EAR history after drag ends."""
         self._history_frozen = False
 
-    def _detect_blink(self, all_points: np.ndarray) -> bool:
-        """Detect blinks using Eye Aspect Ratio (EAR)."""
-        ear = self._compute_ear(all_points)
+    def _update_ear(self, ear: float) -> bool:
+        """Common EAR bookkeeping: update history, baseline, return is_blinking."""
         self._last_ear = ear
         self._frame_count += 1
 
-        # Only record into history when not frozen (during drag, squint
-        # values would corrupt the baseline)
-        if not self._history_frozen:
-            self._ear_history.append(ear)
-            # Only recompute baseline when we actually added new data
-            if len(self._ear_history) >= self._min_history:
-                sorted_hist = sorted(self._ear_history)
-                idx = int(len(sorted_hist) * 0.75)
-                self._open_baseline = float(sorted_hist[min(idx, len(sorted_hist) - 1)])
-
+        # Determine blink status first (before updating history)
         if self._open_baseline > 0:
             threshold = self._open_baseline * self._blink_ratio
         else:
             threshold = 0.2
+        is_blinking = ear < threshold
 
-        return ear < threshold
+        # Only add to history when eyes are open (not blinking) to prevent
+        # blink frames from dragging the baseline down
+        if not self._history_frozen and not is_blinking:
+            self._ear_history.append(ear)
+            # Recompute baseline every 10 frames (3x/sec at 30fps is plenty)
+            if (
+                len(self._ear_history) >= self._min_history
+                and self._frame_count % 10 == 0
+            ):
+                sorted_hist = sorted(self._ear_history)
+                idx = int(len(sorted_hist) * 0.75)
+                self._open_baseline = float(sorted_hist[min(idx, len(sorted_hist) - 1)])
+
+        return is_blinking
+
+    def _detect_blink_fast(self, landmarks) -> bool:
+        """Fast blink detection using pure-Python EAR (no numpy)."""
+        return self._update_ear(self._compute_ear_fast(landmarks))
+
+    def _detect_blink(self, all_points: np.ndarray) -> bool:
+        """Detect blinks using Eye Aspect Ratio (EAR) — numpy path."""
+        return self._update_ear(self._compute_ear(all_points))
 
     def _detect_squint(self) -> bool:
         """Detect squinting: EAR below squint threshold but above blink threshold."""
@@ -380,26 +412,96 @@ class NoseFeatureExtractor:
 
     def extract_pose(self, image: np.ndarray) -> tuple[NosePose | None, bool]:
         """
-        Extract lightweight pose data needed for projection.
+        Fast path: only computes yaw, pitch, raw nose position, and EAR.
 
-        Returns:
-            (NosePose, is_blinking) or (None, is_blinking) if no face detected.
+        Skips the full 30D feature vector (normalized coords, bridge vector,
+        triangulation, scale) that extract_features() builds but extract_pose()
+        never uses.
         """
-        features, is_blinking = self.extract_features(image)
-        if features is None:
+        t0 = time.time()
+
+        # --- MediaPipe detection (same as extract_features) ---
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image_rgb = np.ascontiguousarray(image_rgb)
+        mp_image = self._mp.Image(
+            image_format=self._mp.ImageFormat.SRGB,
+            data=image_rgb,
+        )
+        t_cvt = time.time()
+
+        ts_ms = int(time.time() * 1000)
+        if ts_ms <= self._mp_last_ts_ms:
+            ts_ms = self._mp_last_ts_ms + 1
+        self._mp_last_ts_ms = ts_ms
+
+        result = self._face_landmarker.detect_for_video(mp_image, ts_ms)
+        t_detect = time.time()
+
+        if not result.face_landmarks:
+            is_blinking = False
             double_blink = self._detect_double_blink(is_blinking)
+            if self._frame_count % 30 == 0:
+                print(f"[schnoz-debug] extract_pose: NO FACE (cvt={((t_cvt-t0)*1000):.1f}ms detect={((t_detect-t_cvt)*1000):.1f}ms)")
             return None, is_blinking
+
+        landmarks = result.face_landmarks[0]
+        h, w = image.shape[:2]
+
+        # --- EAR / blink (pure Python, no numpy array needed) ---
+        is_blinking = self._detect_blink_fast(landmarks)
+
+        # --- Build small numpy array for scaffold only (11 pts, not 478) ---
+        pts = np.array(
+            [(landmarks[i].x, landmarks[i].y, landmarks[i].z) for i in _SCAFFOLD_POSE_INDICES],
+            dtype=np.float32,
+        )
+        # pts[0..9] = scaffold, pts[10] = nose tip
+        scaffold_pts = pts[:10]
+        nose_tip = pts[10]
+
+        # --- Scaffold centroid + orthonormal basis (for yaw/pitch) ---
+        centroid = np.median(scaffold_pts, axis=0)
+
+        x_axis = scaffold_pts[1] - scaffold_pts[0]  # right ear - left ear
+        x_axis /= np.linalg.norm(x_axis) + 1e-9
+
+        y_approx = scaffold_pts[2] - centroid  # forehead - centroid
+        y_approx /= np.linalg.norm(y_approx) + 1e-9
+        y_axis = y_approx - np.dot(y_approx, x_axis) * x_axis
+        y_axis /= np.linalg.norm(y_axis) + 1e-9
+
+        z_axis = np.cross(x_axis, y_axis)
+
+        R = np.column_stack((x_axis, y_axis, z_axis))
+
+        yaw = float(np.arctan2(R[1, 0], R[0, 0]))
+        pitch = float(np.arctan2(-R[2, 0], np.sqrt(R[2, 1] ** 2 + R[2, 2] ** 2)))
+
+        raw_nose_x = float(nose_tip[0] * w)
+        raw_nose_y = float(nose_tip[1] * h)
 
         squinting = self._detect_squint()
         double_blink = self._detect_double_blink(is_blinking)
+        t_end = time.time()
 
-        # Indices in the 30D feature vector:
-        #   [12]=yaw, [13]=pitch, [15]=raw_nose_x, [16]=raw_nose_y
+        # Periodic extract_pose breakdown (every 30 frames)
+        if self._frame_count % 30 == 0:
+            cvt_ms = (t_cvt - t0) * 1000
+            detect_ms = (t_detect - t_cvt) * 1000
+            post_ms = (t_end - t_detect) * 1000
+            total_ms = (t_end - t0) * 1000
+            print(
+                f"[schnoz-debug] extract_pose: cvt={cvt_ms:.1f}ms mediapipe={detect_ms:.1f}ms "
+                f"post={post_ms:.1f}ms total={total_ms:.1f}ms "
+                f"EAR={self._last_ear:.3f} baseline={self._open_baseline:.3f} "
+                f"squint={squinting} blink={is_blinking} frozen={self._history_frozen}"
+            )
+
         return NosePose(
-            raw_nose_x=features[15],
-            raw_nose_y=features[16],
-            yaw=features[12],
-            pitch=features[13],
+            raw_nose_x=raw_nose_x,
+            raw_nose_y=raw_nose_y,
+            yaw=yaw,
+            pitch=pitch,
             squinting=squinting,
             double_blink=double_blink,
         ), is_blinking
