@@ -99,11 +99,18 @@ class TrackingEngine:
         drag_start_time = 0.0  # when drag activated (for grace period)
         drag_ema_x = 0.0  # lightweight EMA for responsive drag movement
         drag_ema_y = 0.0
+        drag_frozen_yaw = 0.0  # yaw/pitch frozen at drag start to avoid squint jitter
+        drag_frozen_pitch = 0.0
 
         frame_count = 0
         _last_fps_time = time.time()
         _fps_frame_count = 0
         _last_loop_time = time.time()
+
+        # Post-blink freeze: prevent cursor drift during double-blink inter-blink gap
+        blink_freeze_until = 0.0
+        was_blinking_prev = False
+
         try:
             while not self._stop_event.is_set():
                 t_loop_start = time.time()
@@ -152,6 +159,7 @@ class TrackingEngine:
                             extractor.unfreeze_baseline()
                         drag_state = _DRAG_IDLE
                         squint_release_time = None
+                        blink_freeze_until = 0.0
                         cursor_ctl.click()
                         did_click = True
 
@@ -170,9 +178,11 @@ class TrackingEngine:
                             extractor.unfreeze_baseline()
                             print(f"[schnoz-debug] DRAG PENDING→IDLE (squint released after {held:.2f}s)")
                         elif time.time() - squint_start_time >= SQUINT_SUSTAIN_TIME:
+                            drag_frozen_yaw = pose.yaw
+                            drag_frozen_pitch = pose.pitch
                             cx, cy = projector.project(
                                 pose.raw_nose_x, pose.raw_nose_y,
-                                pose.yaw, pose.pitch,
+                                drag_frozen_yaw, drag_frozen_pitch,
                             )
                             drag_ema_x = cx
                             drag_ema_y = cy
@@ -210,18 +220,34 @@ class TrackingEngine:
                 # --- Cursor movement ---
                 # During active drag, always move (squinting keeps eyes half-closed
                 # which registers as "blinking" — ignore that).
-                # Otherwise freeze cursor during blinks and double-take.
+                # Otherwise freeze cursor during blinks, double-take, and post-blink
+                # grace period (prevents drift during double-blink inter-blink gap).
                 drag_active = drag_state == _DRAG_ACTIVE
+
+                now_freeze = time.time()
+                if was_blinking_prev and not is_blinking:
+                    blink_freeze_until = now_freeze + 0.4
+                was_blinking_prev = is_blinking
+
+                cursor_frozen = now_freeze < blink_freeze_until
                 can_move = pose is not None and not did_click and (drag_active or not double_take.mid_gesture)
-                should_move = can_move and (drag_active or not is_blinking)
+                should_move = can_move and (drag_active or (not is_blinking and not cursor_frozen))
                 if not should_move and frame_count % 30 == 0:
-                    print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} mid_gesture={double_take.mid_gesture} drag_active={drag_active} blink={is_blinking}")
+                    print(f"[schnoz-debug] frame {frame_count}: SKIPPED MOVE pose={pose is not None} click={did_click} mid_gesture={double_take.mid_gesture} drag_active={drag_active} blink={is_blinking} frozen={cursor_frozen}")
                 if should_move:
                     t_proj_start = time.time()
-                    cx, cy = projector.project(
-                        pose.raw_nose_x, pose.raw_nose_y,
-                        pose.yaw, pose.pitch,
-                    )
+                    if drag_active:
+                        # During drag, use frozen yaw/pitch from drag start
+                        # to eliminate squint-induced angular jitter.
+                        cx, cy = projector.project(
+                            pose.raw_nose_x, pose.raw_nose_y,
+                            drag_frozen_yaw, drag_frozen_pitch,
+                        )
+                    else:
+                        cx, cy = projector.project(
+                            pose.raw_nose_x, pose.raw_nose_y,
+                            pose.yaw, pose.pitch,
+                        )
                     if drag_active:
                         # During drag, bypass smoother for responsive movement.
                         # Use light EMA (low alpha = less smoothing = more responsive).
