@@ -1,6 +1,7 @@
 """HotkeyListener: global keyboard shortcuts via pynput.
 
-Registers Cmd+Enter (regular mode) and Cmd+Shift+Enter (ultra schnoz).
+Registers Cmd+Enter (regular), Cmd+Shift+Enter (ultra), and
+Cmd+Option+Enter (chunks mode).
 
 Uses a manual keyboard.Listener instead of GlobalHotKeys to work around
 a pynput 1.8.x bug on macOS where GlobalHotKeys._on_press() receives an
@@ -21,9 +22,11 @@ class HotkeyListener:
         self,
         on_regular: Callable[[], None],
         on_ultra: Callable[[], None],
+        on_chunks: Callable[[], None],
     ):
         self._on_regular = on_regular
         self._on_ultra = on_ultra
+        self._on_chunks = on_chunks
         self._listener: keyboard.Listener | None = None
         self._pressed: set = set()
 
@@ -40,8 +43,15 @@ class HotkeyListener:
                 or keyboard.Key.shift_l in self._pressed
                 or keyboard.Key.shift_r in self._pressed
             )
+            opt = (
+                keyboard.Key.alt in self._pressed
+                or keyboard.Key.alt_l in self._pressed
+                or keyboard.Key.alt_r in self._pressed
+            )
             if cmd and shift:
                 self._on_ultra()
+            elif cmd and opt:
+                self._on_chunks()
             elif cmd:
                 self._on_regular()
 

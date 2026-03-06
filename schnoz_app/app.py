@@ -5,6 +5,7 @@ Entry point: `python -m schnoz_app.app`
 State machine:
   IDLE ──Cmd+Enter──────────> REGULAR ──Cmd+Enter or mouse──> IDLE
   IDLE ──Cmd+Shift+Enter────> ULTRA   ──Cmd+Shift+Enter or mouse──> IDLE
+  IDLE ──Cmd+Opt+Enter──────> CHUNKS  ──Cmd+Opt+Enter or mouse──> IDLE
   REGULAR ──Cmd+Shift+Enter─> ULTRA   (upgrade: start voice)
   ULTRA ──Cmd+Enter─────────> REGULAR (downgrade: stop voice)
 """
@@ -22,6 +23,7 @@ from schnoz_app.config import (
     USE_APPLE_HEAD_POINTER,
     WISPRFLOW_API_KEY,
 )
+from schnoz_app.chunks_mode import ChunksMode
 from schnoz_app.hotkey_listener import HotkeyListener
 from schnoz_app.mouse_monitor import MouseMonitor
 from schnoz_app.platform import is_head_pointer_enabled, set_head_pointer_enabled
@@ -34,6 +36,7 @@ from schnoz_app.wispr_engine import start_wispr_thread
 IDLE = "idle"
 REGULAR = "regular"
 ULTRA = "ultra"
+CHUNKS = "chunks"
 
 
 class _MainThreadDispatcher:
@@ -78,6 +81,7 @@ class SchnozApp(rumps.App):
         self._wispr_text_queue = None
         self._wispr_loop: asyncio.AbstractEventLoop | None = None
         self._wispr_client = None
+        self._chunks_mode: ChunksMode | None = None
         self._use_apple_head_pointer = USE_APPLE_HEAD_POINTER
         self._head_pointer_was_enabled = False
         self._head_pointer_enabled_by_app = False
@@ -85,11 +89,13 @@ class SchnozApp(rumps.App):
         # Menu items
         self._regular_item = rumps.MenuItem("Regular  ⌘↩", callback=self._menu_regular)
         self._ultra_item = rumps.MenuItem("Ultraschnoz  ⌘⇧↩", callback=self._menu_ultra)
+        self._chunks_item = rumps.MenuItem("Chunks  ⌘⌥↩", callback=self._menu_chunks)
         self._quit_item = rumps.MenuItem("Quit Schnoz", callback=self._quit)
 
         self.menu = [
             self._regular_item,
             self._ultra_item,
+            self._chunks_item,
             None,  # separator
             self._quit_item,
         ]
@@ -101,6 +107,7 @@ class SchnozApp(rumps.App):
         self._hotkeys = HotkeyListener(
             on_regular=self._on_hotkey_regular,
             on_ultra=self._on_hotkey_ultra,
+            on_chunks=self._on_hotkey_chunks,
         )
 
     # -- Lifecycle ----------------------------------------------------------
@@ -111,7 +118,7 @@ class SchnozApp(rumps.App):
         self._mouse_monitor.start()
         self._hotkeys.start()
         print(f"[schnoz] {APP_NAME} is running")
-        print("[schnoz] Cmd+Enter = Regular Mode, Cmd+Shift+Enter = Ultra Schnoz")
+        print("[schnoz] Cmd+Enter = Regular, Cmd+Shift+Enter = Ultra, Cmd+Opt+Enter = Chunks")
         if self._use_apple_head_pointer:
             print("[schnoz] Movement backend: Apple Head Pointer (shortcut-based)")
         else:
@@ -127,6 +134,10 @@ class SchnozApp(rumps.App):
         """Dispatch to main thread."""
         _dispatch_to_main(self.toggle_ultra)
 
+    def _on_hotkey_chunks(self):
+        """Dispatch to main thread."""
+        _dispatch_to_main(self.toggle_chunks)
+
     # -- Menu callbacks (called from main thread) ---------------------------
 
     def _menu_regular(self, sender):
@@ -134,6 +145,9 @@ class SchnozApp(rumps.App):
 
     def _menu_ultra(self, sender):
         self.toggle_ultra()
+
+    def _menu_chunks(self, sender):
+        self.toggle_chunks()
 
     def _quit(self, sender):
         self._stop_all()
@@ -151,6 +165,10 @@ class SchnozApp(rumps.App):
         elif self._state == ULTRA:
             self._stop_wispr()
             self._state = REGULAR
+        elif self._state == CHUNKS:
+            self._stop_chunks()
+            self._start_tracking()
+            self._state = REGULAR
         self._update_ui()
 
     def toggle_ultra(self):
@@ -163,6 +181,26 @@ class SchnozApp(rumps.App):
         elif self._state == REGULAR:
             self._start_wispr()
             self._state = ULTRA
+        elif self._state == CHUNKS:
+            self._stop_chunks()
+            self._start_tracking()
+            self._start_wispr()
+            self._state = ULTRA
+        self._update_ui()
+
+    def toggle_chunks(self):
+        if self._state == IDLE:
+            self._start_chunks()
+            self._state = CHUNKS
+            print("[schnoz] Chunks mode enabled")
+        elif self._state == CHUNKS:
+            self._stop_all()
+            print("[schnoz] Chunks mode disabled")
+        else:
+            self._stop_all()
+            self._start_chunks()
+            self._state = CHUNKS
+            print("[schnoz] Switched to Chunks mode")
         self._update_ui()
 
     def _on_external_mouse(self):
@@ -210,6 +248,13 @@ class SchnozApp(rumps.App):
                 self._tracker.set_text_queue(text_queue)
             print("[schnoz] Voice typing started (always listening)")
 
+    def _start_chunks(self):
+        self._start_wispr()
+        if self._chunks_mode is None:
+            self._chunks_mode = ChunksMode()
+        if self._wispr_text_queue is not None:
+            self._chunks_mode.start(self._wispr_text_queue)
+
     def _stop_wispr(self):
         if self._wispr_client is not None:
             # Schedule shutdown on the wispr event loop
@@ -223,6 +268,11 @@ class SchnozApp(rumps.App):
         self._wispr_loop = None
         self._wispr_client = None
         print("[schnoz] Voice typing stopped")
+
+    def _stop_chunks(self):
+        if self._chunks_mode is not None and self._chunks_mode.running:
+            self._chunks_mode.stop()
+        self._chunks_mode = None
 
     def _stop_tracking(self):
         self._mouse_monitor.disable()
@@ -238,6 +288,7 @@ class SchnozApp(rumps.App):
             self._head_pointer_enabled_by_app = False
 
     def _stop_all(self):
+        self._stop_chunks()
         self._stop_wispr()
         self._stop_tracking()
         self._state = IDLE
@@ -247,6 +298,7 @@ class SchnozApp(rumps.App):
     def _update_ui(self):
         self._regular_item.state = self._state in (REGULAR, ULTRA)
         self._ultra_item.state = self._state == ULTRA
+        self._chunks_item.state = self._state == CHUNKS
 
         # Small text next to icon to indicate active mode
         if self._state == IDLE:
@@ -255,6 +307,8 @@ class SchnozApp(rumps.App):
             self.title = "ON"
         elif self._state == ULTRA:
             self.title = "ULTRA"
+        elif self._state == CHUNKS:
+            self.title = "CHUNK"
 
 
 def main():
